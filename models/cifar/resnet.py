@@ -7,7 +7,9 @@
 # @File    : resnet.py
 # @Software: PyCharm
 
+import torch
 import torch.nn as nn
+
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
@@ -93,14 +95,14 @@ class Bottleneck(nn.Module):
 class ResNet(nn.Module):
     """Self-distillation based on resnet"""
 
-    def __init__(self, block, layers, branch_layers, num_classes=2):
+    def __init__(self, block, layers, branch_layers, num_classes):
         self.inplanes = 64
         super(ResNet, self).__init__()
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=3, stride=1, padding=1,
                                bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
+        self.bn1 = nn.BatchNorm2d(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
 
         self.layer1 = self._make_layer(block, 64, layers[0])
         inplanes_head1 = self.inplanes
@@ -168,46 +170,49 @@ class ResNet(nn.Module):
     def forward(self, x):
         x = self.conv1(x)
         x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)  # (1, 64, 56, 56)
+        x = self.relu(x) 
 
-        x = node1 = self.layer1(x)  # (1, 256, 56, 56)
-        x = node2 = self.layer2(x)  # (1, 512, 28, 28)
-        x = node3 = self.layer3(x)  # (1, 1024, 14, 14)
+        x = node1 = self.layer1(x) 
+        x = node2 = self.layer2(x)
+        x = node3 = self.layer3(x)
         x = self.layer4(x)
 
         # CAM branch
         cam1 = self.relu(self.cam_bn1(self.cam_conv1(x)))
         out_cam = self.gap(self.cam_out(cam1))
-        out_cam = out_cam.view(out_cam.size(0), -1)
+        out_cam = torch.flatten(out_cam, 1)
 
         # main branch
         cam2 = self.sigmoid(self.cam_bn2(self.cam_conv2(cam1)))
         main_feature = x * cam2 + x
         m = self.gap(main_feature)
-        m = m.view(m.size(0), -1)
+        m = torch.flatten(m, 1)
         out_main = self.fc_main(m)
 
         # side branch 1
         hide_feature1 = self.sb13(self.sb12(self.sb11(node1)))
         h1 = self.gap(hide_feature1)
-        h1 = h1.view(h1.size(0), -1)
+        h1 = torch.flatten(h1, 1)
         side_out1 = self.fc_head1(h1)
 
         # side branch 2
         hide_feature2 = self.sb22(self.sb21(node2))
         h2 = self.gap(hide_feature2)
-        h2 = h2.view(h2.size(0), -1)
+        h2 = torch.flatten(h2, 1)
         side_out2 = self.fc_head2(h2)
 
         # side branch 3
         hide_feature3 = self.sb31(node3)
         h3 = self.gap(hide_feature3)
-        h3 = h3.view(h3.size(0), -1)
+        h3 = torch.flatten(h3, 1)
         side_out3 = self.fc_head3(h3)
 
-        return [out_cam, x, out_main], [hide_feature1, side_out1], [hide_feature2, side_out2], [
+        return [out_cam, main_feature, out_main], [hide_feature1, side_out1], [hide_feature2, side_out2], [
             hide_feature3, side_out3]
+
+
+        # Main  Branch1   Branch2  Branch3
+        # 1.84GFlops  1.36GFlops  1.59GFlops 1.82GFlops   
 
 
 def resnet18(num_classes, **kwargs):
@@ -256,15 +261,4 @@ def resnet152(num_classes, **kwargs):
 
 
 if __name__ == '__main__':
-    from torchstat import stat
-
-    net = resnet50(num_classes=4)
-    stat(net, (3, 224, 224))
-
-    # # Freeze some layers
-    # ct = 0
-    # for name, child in net.named_children():
-    #     ct += 1
-    #     if ct < 6:
-    #         for names, params in child.named_children():
-    #             params.requires_grad = False
+    pass

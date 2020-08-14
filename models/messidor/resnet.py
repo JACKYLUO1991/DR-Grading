@@ -169,11 +169,11 @@ class ResNet(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)  # (1, 64, 56, 56)
+        x = self.maxpool(x)
 
-        x = node1 = self.layer1(x)  # (1, 256, 56, 56)
-        x = node2 = self.layer2(x)  # (1, 512, 28, 28)
-        x = node3 = self.layer3(x)  # (1, 1024, 14, 14)
+        x = node1 = self.layer1(x)
+        x = node2 = self.layer2(x)
+        x = node3 = self.layer3(x)
         x = self.layer4(x)
 
         # CAM branch
@@ -206,14 +206,12 @@ class ResNet(nn.Module):
         h3 = h3.view(h3.size(0), -1)
         side_out3 = self.fc_head3(h3)
 
-        # print(out_cam.size())
-        # print(out_main.size())
-        # print(side_out1.size())
-        # print(side_out2.size())
-        # print(side_out3.size())
-
-        return [out_cam, x, out_main], [hide_feature1, side_out1], [hide_feature2, side_out2], [
+        return [out_cam, main_feature, out_main], [hide_feature1, side_out1], [hide_feature2, side_out2], [
             hide_feature3, side_out3]
+
+
+        # Main  Branch1   Branch2  Branch3
+        # 1.84GFlops  1.36GFlops  1.59GFlops 1.82GFlops   
 
 
 def resnet18(num_classes, **kwargs):
@@ -262,15 +260,32 @@ def resnet152(num_classes, **kwargs):
 
 
 if __name__ == '__main__':
-    from torchstat import stat
+    import torch
+    import time
+    # from torchstat import stat
 
-    net = resnet50(num_classes=4)
+    # net = resnet50(num_classes=4)
+    # # stat(net, (3, 224, 224))
+
+    # # Freeze some layers
+    # ct = 0
+    # for name, child in net.named_children():
+    #     ct += 1
+    #     if ct < 6:
+    #         for names, params in child.named_children():
+    #             params.requires_grad = False
+    N = 500
+    input = torch.randn(N, 3, 224 ,224).cuda()
+    net = resnet18(num_classes=2).cuda()
     # stat(net, (3, 224, 224))
 
-    # Freeze some layers
-    ct = 0
-    for name, child in net.named_children():
-        ct += 1
-        if ct < 6:
-            for names, params in child.named_children():
-                params.requires_grad = False
+    torch.cuda.synchronize()
+    start = time.time()
+
+    with torch.no_grad():
+        net(input)
+    
+    torch.cuda.synchronize()
+    dur = time.time() - start
+
+    print(dur / N)

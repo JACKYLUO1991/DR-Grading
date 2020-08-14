@@ -22,28 +22,21 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def kl_loss(logits_q, logits_p, T):
-    assert logits_p.size() == logits_q.size()
-    b, c = logits_p.size()
-    p = nn.Softmax(dim=1)(logits_p / T)
-    q = nn.Softmax(dim=1)(logits_q / T)
-    epsilon = 1e-8
-    _p = (p + epsilon * torch.ones(b, c).cuda()) / (1.0 + c * epsilon)
-    _q = (q + epsilon * torch.ones(b, c).cuda()) / (1.0 + c * epsilon)
-    return (T ** 2) * torch.mean(torch.sum(_p * torch.log(_p / _q), dim=1))
+# def kl_loss(logits_q, logits_p, T):
+#     assert logits_p.size() == logits_q.size()
+#     b, c = logits_p.size()
+#     p = nn.Softmax(dim=1)(logits_p / T)
+#     q = nn.Softmax(dim=1)(logits_q / T)
+#     epsilon = 1e-8
+#     _p = (p + epsilon * torch.ones(b, c).cuda()) / (1.0 + c * epsilon)
+#     _q = (q + epsilon * torch.ones(b, c).cuda()) / (1.0 + c * epsilon)
+#     return (T ** 2) * torch.mean(torch.sum(_p * torch.log(_p / _q), dim=1))
 
 
-# def kl_loss(output, target_output, args):
-#     """Compute kd loss"""
-#     """
-#     para: output: middle ouptput logits.
-#     para: target_output: final output has divided by temperature and softmax.
-#     """
-#
-#     output = output / args.temperature
-#     output_log_softmax = torch.log_softmax(output, dim=1)
-#     loss_kd = -torch.mean(torch.sum(output_log_softmax * target_output, dim=1))
-#     return loss_kd
+def kl_loss(outputs, targets, args):
+    log_softmax_outputs = torch.log_softmax(outputs/args.temperature, dim=1)
+    softmax_targets = torch.softmax(targets/args.temperature, dim=1)
+    return -(log_softmax_outputs * softmax_targets).sum(dim=1).mean()
 
 
 def feature_loss(fea, target_fea):

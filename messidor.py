@@ -1,3 +1,12 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# @Time    : 2020/6/9 13:51
+# @Author  : JackyLUO
+# @E-mail  : lingluo@stumail.neu.edu.cn
+# @Site    : 
+# @File    : messidor.py
+# @Software: PyCharm
+
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn as nn
@@ -14,8 +23,8 @@ import numpy as np
 import argparse
 
 from utils import *
-from datasets.missidor import Missidor
-import models.missidor as models
+from datasets.messidor import Messidor
+import models.messidor as models
 
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, f1_score
@@ -42,15 +51,18 @@ model_urls = {
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
 
-parser = argparse.ArgumentParser(description='PyTorch Missidor Training')
+parser = argparse.ArgumentParser(description='PyTorch MESSIDOR Training')
 parser.add_argument('-d', '--data', metavar='DIR',
                     help='path to dataset')
-parser.add_argument('model_dir', metavar='savedir')
 parser.add_argument('-a', '--arch', metavar='ARCH', default='resnet50')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=500, type=int, metavar='N',
+parser.add_argument('-c', '--checkpoint', default='checkpoints', type=str, metavar='PATH',
+                    help='path to save checkpoint (default: checkpoints)')
+parser.add_argument('--epochs', default=300, type=int, metavar='N',
                     help='number of total epochs to run')
+parser.add_argument('--num-classes', default=2, type=int,
+                    help='classes number')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=40, type=int,
@@ -58,8 +70,14 @@ parser.add_argument('-b', '--batch-size', default=40, type=int,
                     help='mini-batch size (default: 256), this is the total '
                          'batch size of all GPUs on the current node when '
                          'using Data Parallel or Distributed Data Parallel')
-parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+parser.add_argument('--lr', '--learning-rate', default=1e-3, type=float,
                     metavar='LR', help='initial learning rate', dest='lr')
+parser.add_argument('--lr-decay', type=str, default='cos',
+                    help='mode for learning rate decay')
+parser.add_argument('--warmup', action='store_true',
+                    help='set lower initial learning rate to warm up the training')
+parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
+                    help='momentum')
 parser.add_argument('--wd', '--weight-decay', default=1e-4, type=float,
                     metavar='W', help='weight decay (default: 1e-4)',
                     dest='weight_decay')
@@ -69,28 +87,31 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
                     help='evaluate model on validation set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_true',
                     help='use pre-trained model')
+parser.add_argument('--save', dest='save', action='store_true',
+                    help='save model or not')
 parser.add_argument('--gpu', default='0', type=int,
                     help='GPU id to use.')
 parser.add_argument("--fold_name", default="fold1", type=str)
 parser.add_argument('--temperature', default=1, type=float,
                     help='temperature for smoothing the soft target')
-parser.add_argument('--theta', default=0.1, type=float,
+parser.add_argument('--lambd', default=1, type=float,
+                    help='weight of loss')
+parser.add_argument('--theta', default=0.4, type=float,
                     help='weight of side loss')
-parser.add_argument('--alpha', default=0.1, type=float,
+parser.add_argument('--alpha', default=1, type=float,
                     help='weight of kd loss')
-parser.add_argument('--beta', default=1e-6, type=float,
+parser.add_argument('--beta', default=1e-7, type=float,
                     help='weight of feature loss')
 
-# lr
-parser.add_argument("--lr_mode", default="cosine", type=str)
-parser.add_argument("--base_lr", default=0.0003, type=float)
-parser.add_argument("--warmup_epochs", default=0, type=int)
-parser.add_argument("--warmup_lr", default=0.0, type=float)
-parser.add_argument("--targetlr", default=0.0, type=float)
-parser.add_argument("--lambda_value", default=0.25, type=float)
+# # lr
+# parser.add_argument("--lr_mode", default="cosine", type=str)
+# parser.add_argument("--base_lr", default=0.0003, type=float)
+# parser.add_argument("--warmup_epochs", default=0, type=int)
+# parser.add_argument("--warmup_lr", default=0.0, type=float)
+# parser.add_argument("--targetlr", default=0.0, type=float)
+# parser.add_argument("--lambda_value", default=0.25, type=float)
 
 best_acc1 = 0
-best_auc = 0
 
 
 def count_parameters(model):
@@ -99,25 +120,21 @@ def count_parameters(model):
 
 def main():
     args = parser.parse_args()
-
     main_worker(args)
-
-
-def worker_init_fn(worker_id):
-    random.seed(1 + worker_id)
 
 
 def main_worker(args):
     global best_acc1
-    global best_auc
 
-    if not os.path.isdir(args.model_dir):
-        os.makedirs(args.model_dir)
+    start_epoch = args.start_epoch
+
+    if not os.path.exists(args.checkpoint):
+        mkdir_p(args.checkpoint)
 
     if args.gpu is not None:
         print("Use GPU: {} for training".format(args.gpu))
 
-    model = models.__dict__[args.arch]()
+    model = models.__dict__[args.arch](args.num_classes)
     if args.pretrained:
         print("==> Load pretrained model")
         model_dict = model.state_dict()
@@ -126,31 +143,48 @@ def main_worker(args):
         model_dict.update(pretrained_dict)
         model.load_state_dict(model_dict)
 
+    ###################################  Freeze some layers  ###################################
+    # ct = 0
+    # for name, child in model.named_children():
+    #     ct += 1
+    #     if ct < 6:
+    #         for names, params in child.named_children():
+    #             params.requires_grad = False
+    ###################################  Freeze some layers  ###################################
+
     torch.cuda.set_device(args.gpu)
-    model = model.cuda(args.gpu)
+    model = model.cuda()
 
     print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters()) / 1000000.0))
 
     # define loss function (criterion) and optimizer
-    criterion = nn.CrossEntropyLoss().cuda(args.gpu)
-    optimizer = torch.optim.Adam(model.parameters(), args.base_lr, weight_decay=args.weight_decay)
+    criterion = nn.CrossEntropyLoss().cuda()
+    # optimizer = torch.optim.SGD(model.parameters(), args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
+    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), args.lr,
+                                 weight_decay=args.weight_decay)
 
     # optionally resume from a checkpoint
+    title = 'Messidor-' + args.arch
     if args.resume:
         # Load checkpoint
         if os.path.isfile(args.resume):
             print('==> Resuming from checkpoint..')
             checkpoint = torch.load(args.resume)
             start_epoch = checkpoint['epoch']
-            best_acc = checkpoint['best_acc']
+            best_acc = checkpoint['best_acc1']
             model.load_state_dict(checkpoint['state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer'])
             print("=> loaded checkpoint '{}' (epoch {})"
                   .format(args.resume, checkpoint['epoch']))
             args.checkpoint = os.path.dirname(args.resume)
+            logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title, resume=True)
         else:
             print("=> no checkpoint found at '{}'".format(args.resume))
             exit(-1)
+    else:
+        logger = Logger(os.path.join(args.checkpoint, 'log.txt'), title=title)
+        logger.set_names(['Learning Rate', 'Train Loss', 'Val Loss', 'Val Acc.', 'Val Side1 Acc.', 'Val Side2 Acc.',
+                          'Val Side3 Acc.', 'Val Auc.', 'Side1 Auc.', 'Side2 Auc.', 'Side3 Auc.'])
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
@@ -168,10 +202,15 @@ def main_worker(args):
         transforms.ToTensor(),
         normalize])
 
-    val_dataset = Missidor(root=args.data, mode='val',
+    val_dataset = Messidor(root=args.data, mode='val',
                            transform=tra_test, args=args)
 
-    train_dataset = Missidor(root=args.data, mode='train', transform=tra_train, args=args)
+    train_dataset = Messidor(root=args.data, mode='train', transform=tra_train, args=args)
+
+    # For unbalanced dataset we create a weighted sampler, binary classification
+    weights = make_weights_for_balanced_classes(train_dataset.train_label, args.num_classes)
+    weights = torch.DoubleTensor(weights)
+    sampler = torch.utils.data.sampler.WeightedRandomSampler(weights, len(weights))
 
     val_loader = torch.utils.data.DataLoader(
         val_dataset,
@@ -179,8 +218,8 @@ def main_worker(args):
         num_workers=args.workers, pin_memory=True)
 
     train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True,
-        num_workers=args.workers, pin_memory=True, worker_init_fn=worker_init_fn)
+        train_dataset, batch_size=args.batch_size, shuffle=False, sampler=sampler,
+        num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
         pass
@@ -209,24 +248,57 @@ def main_worker(args):
         #     print("time", time.time() - a)
         #     return
 
-    writer = SummaryWriter("runs/" + args.model_dir.split("/")[-1])
-    lr_scheduler = LRScheduler(optimizer, len(train_loader), args)
+    writer = SummaryWriter(args.checkpoint)
+    # lr_scheduler = LRScheduler(optimizer, len(train_loader), args)
 
-    for epoch in range(args.start_epoch, args.epochs):
-        total_loss = train(train_loader, model, criterion, lr_scheduler, writer, epoch, optimizer, args)
+    for epoch in range(start_epoch, args.epochs):
+        total_loss = train(train_loader, model, criterion, writer, epoch, optimizer, args)
         writer.add_scalar('Train loss', total_loss, epoch + 1)
 
         # evaluate on validation set
-        val_total_loss, val_main_acc, val_side1_acc, val_side2_acc, val_side3_acc = validate(val_loader, model,
-                                                                                             criterion, args)
+        val_total_loss, val_main_acc, val_side1_acc, val_side2_acc, val_side3_acc, m_auc, s1_auc, s2_auc, s3_auc = validate(
+            val_loader, model,
+            criterion, args)
+        lr = optimizer.param_groups[0]['lr']
+        logger.append(
+            [lr, total_loss, val_total_loss, val_main_acc, val_side1_acc, val_side2_acc, val_side3_acc, m_auc, s1_auc,
+             s2_auc, s3_auc])
+
+        writer.add_scalar('Learning rate', lr, epoch + 1)
         writer.add_scalar('Val Loss', val_total_loss, epoch + 1)
         writer.add_scalar('Main Acc', val_main_acc, epoch + 1)
         writer.add_scalar('Side1 Acc', val_side1_acc, epoch + 1)
         writer.add_scalar('Side2 Acc', val_side2_acc, epoch + 1)
         writer.add_scalar('Side3 Acc', val_side3_acc, epoch + 1)
+        writer.add_scalar('Main Auc', m_auc, epoch + 1)
+        writer.add_scalar('Side1 Auc', s1_auc, epoch + 1)
+        writer.add_scalar('Side2 Auc', s2_auc, epoch + 1)
+        writer.add_scalar('Side3 Auc', s3_auc, epoch + 1)
+
+        is_best = val_main_acc > best_acc1
+        best_acc1 = max(val_main_acc, best_acc1)
+
+        if args.save:
+            save_checkpoint({
+                'epoch': epoch + 1,
+                'arch': args.arch,
+                'state_dict': model.state_dict(),
+                'best_prec1': best_acc1,
+                'optimizer': optimizer.state_dict(),
+            }, is_best, checkpoint=args.checkpoint)
+
+    logger.close()
+    logger.plot()
+    savefig(os.path.join(args.checkpoint, 'log.eps'))
+    writer.close()
+
+    print('Best accuracy:')
+    print(best_acc1)
+
+    torch.cuda.empty_cache()
 
 
-def train(train_loader, model, criterion, lr_scheduler, writer, epoch, optimizer, args):
+def train(train_loader, model, criterion, writer, epoch, optimizer, args):
     bar = Bar('Train Processing', max=len(train_loader))
 
     batch_time = AverageMeter()
@@ -240,22 +312,20 @@ def train(train_loader, model, criterion, lr_scheduler, writer, epoch, optimizer
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
-        lr = lr_scheduler.update(i, epoch + 1)
-        writer.add_scalar("lr", lr, epoch + 1)
+        adjust_learning_rate(optimizer, epoch, i, len(train_loader), args)
+        # lr = lr_scheduler.update(i, epoch + 1)
+        # writer.add_scalar("lr", lr, epoch + 1)
 
-        input = input.cuda(args.gpu, non_blocking=True)
-        target = [item.cuda(args.gpu, non_blocking=True) for item in target]
+        input = input.cuda()
+        target = [item.cuda() for item in target]
 
         # x1 is the main output
-        [main_feature, out1, out2, x1, x2], [hide_feature1, side_out1], [hide_feature2, side_out2], [
+        [cam, main_feature, x1], [hide_feature1, side_out1], [hide_feature2, side_out2], [
             hide_feature3, side_out3] = model(input)
 
         # cross-entropy loss
-        out1_loss = criterion(out1, target[0])
-        out2_loss = criterion(out2, target[1])
+        cam_loss = criterion(cam, target[0])
         out_main_loss = criterion(x1, target[0])
-        x2_loss = criterion(x2, target[1])
-
         side1_loss = criterion(side_out1, target[0])
         side2_loss = criterion(side_out2, target[0])
         side3_loss = criterion(side_out3, target[0])
@@ -270,9 +340,9 @@ def train(train_loader, model, criterion, lr_scheduler, writer, epoch, optimizer
         side2_l2_loss = feature_loss(hide_feature2, main_feature.detach())
         side3_l2_loss = feature_loss(hide_feature3, main_feature.detach())
 
-        total_loss = (0.25 * (out1_loss + out2_loss) + out_main_loss + x2_loss) + args.theta * (
-                side1_loss + side2_loss + side3_loss) + \
-                     args.alpha * (side1_kl_loss + side2_kl_loss + side3_kl_loss) + args.beta * (
+        total_loss = (out_main_loss + args.lambd * (
+                side1_loss + side2_loss + side3_loss)) + args.theta * cam_loss + args.alpha * (
+                             side1_kl_loss + side2_kl_loss + side3_kl_loss) + args.beta * (
                              side1_l2_loss + side2_l2_loss + side3_l2_loss)
         losses.update(total_loss.item(), input.size(0))
 
@@ -296,7 +366,6 @@ def train(train_loader, model, criterion, lr_scheduler, writer, epoch, optimizer
         )
         bar.next()
     bar.finish()
-
     return losses.avg
 
 
@@ -315,23 +384,35 @@ def validate(val_loader, model, criterion, args):
     model.eval()
     end = time.time()
 
-    # all_target = []
-    # all_output = []
+    all_target = []
+    main_output = []
+    side1_output = []
+    side2_output = []
+    side3_output = []
 
     with torch.no_grad():
         for i, (input, target) in enumerate(val_loader):
-            input = input.cuda(args.gpu, non_blocking=True)
-            target = [item.cuda(args.gpu, non_blocking=True) for item in target]
+            input = input.cuda()
+            target = [item.cuda() for item in target]
 
-            [main_feature, out1, out2, x1, x2], [hide_feature1, side_out1], [hide_feature2, side_out2], [
+            [cam, main_feature, x1], [hide_feature1, side_out1], [hide_feature2, side_out2], [
                 hide_feature3, side_out3] = model(input)
 
-            # cross-entropy loss
-            out1_loss = criterion(out1, target[0])
-            out2_loss = criterion(out2, target[1])
-            out_main_loss = criterion(x1, target[0])
-            x2_loss = criterion(x2, target[1])
+            # Auc calculation
+            main_o = torch.softmax(x1, dim=1)
+            side1_o = torch.softmax(side_out1, dim=1)
+            side2_o = torch.softmax(side_out2, dim=1)
+            side3_o = torch.softmax(side_out3, dim=1)
 
+            all_target.append(target[0].cpu().data.numpy())
+            main_output.append(main_o.cpu().data.numpy())
+            side1_output.append(side1_o.cpu().data.numpy())
+            side2_output.append(side2_o.cpu().data.numpy())
+            side3_output.append(side3_o.cpu().data.numpy())
+
+            # cross-entropy loss
+            cam_loss = criterion(cam, target[0])
+            out_main_loss = criterion(x1, target[0])
             side1_loss = criterion(side_out1, target[0])
             side2_loss = criterion(side_out2, target[0])
             side3_loss = criterion(side_out3, target[0])
@@ -346,9 +427,9 @@ def validate(val_loader, model, criterion, args):
             side2_l2_loss = feature_loss(hide_feature2, main_feature.detach())
             side3_l2_loss = feature_loss(hide_feature3, main_feature.detach())
 
-            total_loss = (0.25 * (out1_loss + out2_loss) + out_main_loss + x2_loss) + args.theta * (
-                    side1_loss + side2_loss + side3_loss) + \
-                         args.alpha * (side1_kl_loss + side2_kl_loss + side3_kl_loss) + args.beta * (
+            total_loss = (out_main_loss + args.lambd * (
+                    side1_loss + side2_loss + side3_loss)) + args.theta * cam_loss + args.alpha * (
+                                 side1_kl_loss + side2_kl_loss + side3_kl_loss) + args.beta * (
                                  side1_l2_loss + side2_l2_loss + side3_l2_loss)
             losses.update(total_loss.item(), input.size(0))
 
@@ -380,14 +461,20 @@ def validate(val_loader, model, criterion, args):
             )
             bar.next()
         bar.finish()
-        #
-        # # Borrowed from CANet
-        # all_target = [item for sublist in all_target for item in sublist]
-        # all_output = [item for sublist in all_output for item in sublist]
-        # acc = accuracy_score(all_target, np.argmax(all_output, axis=1))
-        # print('Acc:', acc)
 
-        return losses.avg, top1.avg, middle1_top1.avg, middle2_top1.avg, middle3_top1.avg
+    # Borrowed from CANet
+    all_target = [item for sublist in all_target for item in sublist]
+    m_output = [item for sublist in main_output for item in sublist]
+    s1_output = [item for sublist in side1_output for item in sublist]
+    s2_output = [item for sublist in side2_output for item in sublist]
+    s3_output = [item for sublist in side3_output for item in sublist]
+
+    m_auc = roc_auc_score(all_target, [item[1] for item in m_output])
+    s1_auc = roc_auc_score(all_target, [item[1] for item in s1_output])
+    s2_auc = roc_auc_score(all_target, [item[1] for item in s2_output])
+    s3_auc = roc_auc_score(all_target, [item[1] for item in s3_output])
+
+    return losses.avg, top1.avg, middle1_top1.avg, middle2_top1.avg, middle3_top1.avg, m_auc, s1_auc, s2_auc, s3_auc
 
     #         output = torch.softmax(x1, dim=1)
     #
