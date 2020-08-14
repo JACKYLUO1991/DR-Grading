@@ -55,13 +55,13 @@ parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
 parser.add_argument('-c', '--checkpoint', default='cifar100', type=str, metavar='PATH',
                     help='path to save checkpoint (default: checkpoints)')
-parser.add_argument('--epochs', default=250, type=int, metavar='N',
+parser.add_argument('--epochs', default=200, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--num-classes', default=100, type=int,
                     help='classes number')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
-parser.add_argument('-b', '--batch-size', default=256, type=int,
+parser.add_argument('-b', '--batch-size', default=128, type=int,
                     metavar='N',
                     help='mini-batch size (default: 128), this is the total '
                          'batch size of all GPUs on the current node when '
@@ -72,7 +72,7 @@ parser.add_argument('--lr-decay', type=str, default='schedule',
                     help='mode for learning rate decay')
 parser.add_argument('--warmup', action='store_true',
                     help='set lower initial learning rate to warm up the training')
-parser.add_argument('--schedule', type=int, nargs='+', default=[250//3, 500//3, 250-10],
+parser.add_argument('--schedule', type=int, nargs='+', default=[200//3, 200 * 2//3, 200-10],
                     help='Decrease learning rate at these epochs.')
 parser.add_argument('--gamma', type=float, default=0.1, help='LR is multiplied by gamma on schedule.')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',

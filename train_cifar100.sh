@@ -1,0 +1,1 @@
+python cifar100.py -d cifar100 --lr-decay cos --save
