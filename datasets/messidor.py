@@ -10,8 +10,8 @@ import numpy as np
 from tqdm import tqdm
 
 
-class Missidor(data.Dataset):
-    """Loading MISSIDOR dataset"""
+class Messidor(data.Dataset):
+    """Loading MESSIDOR dataset"""
 
     def __init__(self, root, mode, transform=None, args=None):
         self.root = os.path.expanduser(root)
