@@ -28,7 +28,8 @@ from cutout import Cutout
 from utils import *
 import models.cifar as models
 
-from sklearn.metrics import precision_score, recall_score
+from tqdm import tqdm
+from sklearn.metrics import classification_report, precision_score, recall_score, accuracy_score
 
 my_whole_seed = 2020
 torch.manual_seed(my_whole_seed)
@@ -183,8 +184,14 @@ def main_worker(args):
     )
 
     if args.evaluate:
-        results = test(val_loader, model)
-        print(results)
+        m, s1, s2, s3 = test(val_loader, model)
+        print(m)
+        print("\n")
+        print(s1)
+        print("\n")
+        print(s2)
+        print("\n")
+        print(s3)
 
         return
 
@@ -374,51 +381,94 @@ def validate(val_loader, model, criterion, args):
 
 
 def test(test_loader, model):
-    bar = Bar('Testing Processing', max=len(test_loader))
     model.eval()
 
-    main_target = []
-    main_out = []
-    side1_out = []
-    side2_out = []
-    side3_out = []
+    # main_target = []
+    # main_out = []
+    # side1_out = []
+    # side2_out = []
+    # side3_out = []
+    y_target_list = []
+    y_main_list = []
+    y_side1_list = []
+    y_side2_list = []
+    y_side3_list = []
+
 
     with torch.no_grad():
-        for i, (input, target) in enumerate(test_loader):
+        for i, (input, target) in tqdm(enumerate(test_loader)):
             input = input.cuda()
             target = target.cuda()
 
             [_, _, m_out], [_, side_out1], [_, side_out2], [_, side_out3] = model(input)
-            m_out = torch.softmax(m_out, dim=1)
-            side_out1 = torch.softmax(side_out1, dim=1)
-            side_out2 = torch.softmax(side_out2, dim=1)
-            side_out3 = torch.softmax(side_out3, dim=1)
+            # m_out = torch.softmax(m_out, dim=1)
+            # side_out1 = torch.softmax(side_out1, dim=1)
+            # side_out2 = torch.softmax(side_out2, dim=1)
+            # side_out3 = torch.softmax(side_out3, dim=1)
 
-            main_target.append(target.cpu().data.numpy())
-            main_out.append(m_out.cpu().data.numpy())
-            side1_out.append(side_out1.cpu().data.numpy())
-            side2_out.append(side_out2.cpu().data.numpy())
-            side3_out.append(side_out3.cpu().data.numpy())
+            # main_target.append(target.cpu().data.numpy())
+            # main_out.append(m_out.cpu().data.numpy())
+            # side1_out.append(side_out1.cpu().data.numpy())
+            # side2_out.append(side_out2.cpu().data.numpy())
+            # side3_out.append(side_out3.cpu().data.numpy())
+            y_main_softmax = torch.log_softmax(m_out, dim=1)
+            _, y_main_tags = torch.max(y_main_softmax, dim=1)
+            y_main_list.append(y_main_tags.cpu().numpy())
+
+            y_side1_softmax = torch.log_softmax(side_out1, dim=1)
+            _, y_side1_tags = torch.max(y_side1_softmax, dim=1)
+            y_side1_list.append(y_side1_tags.cpu().numpy())
+
+            y_side2_softmax = torch.log_softmax(side_out2, dim=1)
+            _, y_side2_tags = torch.max(y_side2_softmax, dim=1)
+            y_side2_list.append(y_side2_tags.cpu().numpy())
+
+            y_side3_softmax = torch.log_softmax(side_out3, dim=1)
+            _, y_side3_tags = torch.max(y_side3_softmax, dim=1)
+            y_side3_list.append(y_side3_tags.cpu().numpy())
+
+            y_target_list.append(target.cpu().numpy())
 
     print("\nCalculating...")
 
-    all_target = [item for sublist in main_target for item in sublist]
-    m_output = [item for sublist in main_out for item in sublist]
-    s1_output = [item for sublist in side1_out for item in sublist]
-    s2_output = [item for sublist in side2_out for item in sublist]
-    s3_output = [item for sublist in side3_out for item in sublist]
+    # all_target = [item for sublist in main_target for item in sublist]
+    # m_output = [item for sublist in main_out for item in sublist]
+    # s1_output = [item for sublist in side1_out for item in sublist]
+    # s2_output = [item for sublist in side2_out for item in sublist]
+    # s3_output = [item for sublist in side3_out for item in sublist]
 
-    # precision and recall
-    m_dr_p = precision_score(all_target, np.argmax(m_output, axis=1), average='macro')
-    m_dr_r = recall_score(all_target, np.argmax(m_output, axis=1), average='macro')
-    s1_dr_p = precision_score(all_target, np.argmax(s1_output, axis=1), average='macro')
-    s1_dr_r = recall_score(all_target, np.argmax(s1_output, axis=1), average='macro')
-    s2_dr_p = precision_score(all_target, np.argmax(s2_output, axis=1), average='macro')
-    s2_dr_r = recall_score(all_target, np.argmax(s2_output, axis=1), average='macro')
-    s3_dr_p = precision_score(all_target, np.argmax(s3_output, axis=1), average='macro')
-    s3_dr_r = recall_score(all_target, np.argmax(s3_output, axis=1), average='macro')
+    # # precision and recall
+    # m_dr_p = precision_score(all_target, np.argmax(m_output, axis=1), average='macro')
+    # m_dr_r = recall_score(all_target, np.argmax(m_output, axis=1), average='macro')
+    # s1_dr_p = precision_score(all_target, np.argmax(s1_output, axis=1), average='macro')
+    # s1_dr_r = recall_score(all_target, np.argmax(s1_output, axis=1), average='macro')
+    # s2_dr_p = precision_score(all_target, np.argmax(s2_output, axis=1), average='macro')
+    # s2_dr_r = recall_score(all_target, np.argmax(s2_output, axis=1), average='macro')
+    # s3_dr_p = precision_score(all_target, np.argmax(s3_output, axis=1), average='macro')
+    # s3_dr_r = recall_score(all_target, np.argmax(s3_output, axis=1), average='macro')
+    y_target_list = [a.squeeze().tolist() for a in y_target_list]
+    y_main_list = [a.squeeze().tolist() for a in y_main_list]
+    y_side1_list = [a.squeeze().tolist() for a in y_side1_list]
+    y_side2_list = [a.squeeze().tolist() for a in y_side2_list]
+    y_side3_list = [a.squeeze().tolist() for a in y_side3_list]
 
-    return [m_dr_p, m_dr_r], [s1_dr_p, s1_dr_r], [s2_dr_p, s2_dr_r], [s3_dr_p, s3_dr_r]
+    m_dr_a = accuracy_score(y_target_list, y_main_list)
+    m_dr_p = precision_score(y_target_list, y_main_list, average='macro')
+    m_dr_r = recall_score(y_target_list, y_main_list, average='macro')
+
+    s1_dr_a = accuracy_score(y_target_list, y_side1_list)
+    s1_dr_p = precision_score(y_target_list, y_side1_list, average='macro')
+    s1_dr_r = recall_score(y_target_list, y_side1_list, average='macro')
+
+    s2_dr_a = accuracy_score(y_target_list, y_side2_list)
+    s2_dr_p = precision_score(y_target_list, y_side2_list, average='macro')
+    s2_dr_r = recall_score(y_target_list, y_side2_list, average='macro')
+
+    s3_dr_a = accuracy_score(y_target_list, y_side3_list)
+    s3_dr_p = precision_score(y_target_list, y_side3_list, average='macro')
+    s3_dr_r = recall_score(y_target_list, y_side3_list, average='macro')
+
+    return [m_dr_a, m_dr_p, m_dr_r], [s1_dr_a, s1_dr_p, s1_dr_r], [s2_dr_a, s2_dr_p, s2_dr_r], [s3_dr_a, s3_dr_p, s3_dr_r]
 
 
 if __name__ == '__main__':
